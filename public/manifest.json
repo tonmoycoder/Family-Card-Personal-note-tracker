@@ -1,0 +1,30 @@
+{
+  "name": "ফ্যামিলি কার্ড সার্ভে",
+  "short_name": "কার্ড সার্ভে",
+  "description": "বাংলাদেশ ফ্যামিলি কার্ড বাদ পড়া পরিবার মাঠপর্যায় সার্ভে",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#047857",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
