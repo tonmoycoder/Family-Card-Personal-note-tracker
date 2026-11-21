@@ -71,27 +71,22 @@ export default function SurveyForm({
     }, 4500);
   };
 
+  const handleLocationChange = useCallback((link: string) => {
+    setMapsLink(link);
+  }, []);
+
   const handleScanComplete = useCallback(
     (data: { imageBase64: string; scannedData?: ScanResponseData; isOffline?: boolean }) => {
       setImageBase64(data.imageBase64);
 
-      if (data.isOffline) {
-        setNeedsScan(true);
-        showToast('ছবি সংরক্ষিত হয়েছে। ইন্টারনেট পেলে নাম ও নম্বর স্বয়ংক্রিয়ভাবে স্ক্যান হবে।', 'info');
-        return;
-      }
-
       if (data.scannedData) {
         setNeedsScan(false);
         if (data.scannedData.nidName) {
-          setNidName(data.scannedData.nidName);
-          // If local name is currently empty, show gentle suggestion or allow default
-          if (!localKnownName) {
-            setLocalKnownName(data.scannedData.nidName);
-          }
+          setNidName((prev) => (prev.trim() ? prev : data.scannedData!.nidName));
+          setLocalKnownName((prev) => (prev.trim() ? prev : data.scannedData!.nidName));
         }
         if (data.scannedData.nidNumber) {
-          setNidNumber(data.scannedData.nidNumber);
+          setNidNumber((prev) => (prev.trim() ? prev : data.scannedData!.nidNumber));
         }
         if (data.scannedData.detectedAddressArea) {
           setScannedAreaHint(data.scannedData.detectedAddressArea);
@@ -99,7 +94,7 @@ export default function SurveyForm({
         showToast('এনআইডি তথ্য সফলভাবে পড়া হয়েছে!', 'success');
       }
     },
-    [localKnownName]
+    []
   );
 
   const handleClearImage = () => {
@@ -274,7 +269,7 @@ export default function SurveyForm({
 
       {/* 2. Field GPS Location Tracker */}
       <GpsTracker
-        onLocationChange={(link) => setMapsLink(link)}
+        onLocationChange={handleLocationChange}
         currentMapsLink={mapsLink}
       />
 

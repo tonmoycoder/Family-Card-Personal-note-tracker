@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   Search,
@@ -12,81 +12,27 @@ import {
   Image as ImageIcon,
   Building,
 } from 'lucide-react';
-import { SurveyRecord, RecordsApiResponse } from '@/lib/types';
+import { useRecords } from '@/hooks/useRecords';
 
 interface RecordsListProps {
   isOnline: boolean;
-  onRefreshTrigger?: number;
 }
 
-export default function RecordsList({ isOnline, onRefreshTrigger }: RecordsListProps) {
-  const [records, setRecords] = useState<SurveyRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [errorMsg, setErrorMsg] = useState<string>('');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedArea, setSelectedArea] = useState<string>('all');
+export default function RecordsList({ isOnline }: RecordsListProps) {
+  const {
+    records,
+    loading,
+    errorMsg,
+    searchQuery,
+    selectedArea,
+    distinctAreas,
+    filteredRecords,
+    setSearchQuery,
+    setSelectedArea,
+    refreshRecords,
+  } = useRecords(isOnline);
+
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const fetchRecords = useCallback(async () => {
-    setLoading(true);
-    setErrorMsg('');
-
-    // If offline, read straight from localStorage cache
-    if (!isOnline) {
-      if (typeof window !== 'undefined') {
-        const cached = localStorage.getItem('family_card_cached_records');
-        if (cached) {
-          try {
-            setRecords(JSON.parse(cached));
-          } catch {
-            setRecords([]);
-          }
-        }
-      }
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/records', { cache: 'no-store' });
-      const json: RecordsApiResponse = await res.json();
-      const list = json.data || (json as unknown as { records?: SurveyRecord[] }).records || [];
-
-      if (json.success && Array.isArray(list)) {
-        setRecords(list);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('family_card_cached_records', JSON.stringify(list));
-        }
-      } else {
-        // Fallback to cache
-        if (typeof window !== 'undefined') {
-          const cached = localStorage.getItem('family_card_cached_records');
-          if (cached) {
-            setRecords(JSON.parse(cached));
-          }
-        }
-        setErrorMsg(json.error || 'রেকর্ড লোড করা যায়নি।');
-      }
-    } catch {
-      if (typeof window !== 'undefined') {
-        const cached = localStorage.getItem('family_card_cached_records');
-        if (cached) {
-          try {
-            setRecords(JSON.parse(cached));
-          } catch {
-            setRecords([]);
-          }
-        }
-      }
-      setErrorMsg('সার্ভারে সংযোগ হয়নি। ক্যাশ থেকে দেখানো হচ্ছে।');
-    } finally {
-      setLoading(false);
-    }
-  }, [isOnline]);
-
-  useEffect(() => {
-    fetchRecords();
-  }, [fetchRecords, onRefreshTrigger]);
 
   const handleCopyNid = (nid: string, indexStr: string) => {
     if (!nid) return;
@@ -95,63 +41,32 @@ export default function RecordsList({ isOnline, onRefreshTrigger }: RecordsListP
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Distinct areas for filter chips
-  const distinctAreas = useMemo(() => {
-    const areas = new Set<string>();
-    records.forEach((r) => {
-      const area = (r.Area_Para || r.areaPara || '').trim();
-      if (area) areas.add(area);
-    });
-    return Array.from(areas);
-  }, [records]);
-
-  // Filtered list
-  const filteredRecords = useMemo(() => {
-    return records.filter((r) => {
-      const nidName = (r.NID_Name || r.nidName || '').toLowerCase();
-      const localName = (r.Local_Known_Name || r.localKnownName || '').toLowerCase();
-      const nidNumber = (r.NID_Number || r.nidNumber || '').toString();
-      const area = (r.Area_Para || r.areaPara || '').trim();
-
-      const query = searchQuery.trim().toLowerCase();
-      const matchesSearch =
-        !query ||
-        nidName.includes(query) ||
-        localName.includes(query) ||
-        nidNumber.includes(query);
-
-      const matchesArea = selectedArea === 'all' || area === selectedArea;
-
-      return matchesSearch && matchesArea;
-    });
-  }, [records, searchQuery, selectedArea]);
-
   return (
     <div className="space-y-4 pb-20">
       {/* Summary Counter & Header */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
-            <Users className="w-6 h-6" />
+          <div className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold shrink-0">
+            <Users className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs font-semibold text-slate-500 uppercase">
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider leading-none">
               মোট অন্তর্ভুক্ত পরিবার
             </div>
-            <div className="text-2xl font-black text-slate-900 tracking-tight">
-              {records.length} <span className="text-sm font-medium text-slate-500">টি</span>
+            <div className="text-xl font-black text-slate-900 tracking-tight mt-1">
+              {records.length} <span className="text-xs font-semibold text-slate-500">টি</span>
             </div>
           </div>
         </div>
 
         <button
-          onClick={fetchRecords}
+          onClick={refreshRecords}
           disabled={loading}
           aria-label="তালিকা রিফ্রেশ করুন"
           title="তালিকা রিফ্রেশ করুন"
           className="p-2.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-xl transition-colors disabled:opacity-40"
         >
-          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
@@ -224,7 +139,7 @@ export default function RecordsList({ isOnline, onRefreshTrigger }: RecordsListP
 
       {/* Empty State */}
       {!loading && filteredRecords.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center shadow-xs">
           <p className="text-sm font-semibold text-slate-700">কোনো রেকর্ড পাওয়া যায়নি</p>
           <p className="text-xs text-slate-500 mt-1">
             অনুসন্ধান ফিল্টার পরিবর্তন করুন অথবা নতুন পরিবার অন্তর্ভুক্ত করুন।
@@ -253,7 +168,7 @@ export default function RecordsList({ isOnline, onRefreshTrigger }: RecordsListP
           return (
             <div
               key={cardId}
-              className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-emerald-300 transition-colors space-y-3"
+              className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs hover:border-emerald-300 transition-colors space-y-3"
             >
               {/* Header: Serial & Area */}
               <div className="flex items-center justify-between">

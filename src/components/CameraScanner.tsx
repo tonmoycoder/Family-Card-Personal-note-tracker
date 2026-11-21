@@ -1,10 +1,20 @@
 'use client';
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Camera, RefreshCw, Sparkles, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
+import {
+  Camera,
+  RefreshCw,
+  Sparkles,
+  Check,
+  AlertCircle,
+  Image as ImageIcon,
+  Video,
+  X,
+} from 'lucide-react';
 import { compressImageToBase64 } from '@/lib/image-utils';
 import { scanBangladeshNidOnDevice } from '@/lib/nid-ocr';
 import { ScanResponseData } from '@/lib/types';
+import { useCameraStream } from '@/hooks/useCameraStream';
 
 interface CameraScannerProps {
   isOnline: boolean;
@@ -23,12 +33,9 @@ export default function CameraScanner({
   onClearImage,
   savedImageBase64,
 }: CameraScannerProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [capturedImage, setCapturedImage] = useState<string>(savedImageBase64 || '');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [scanProgress, setScanProgress] = useState<{ percent: number; text: string }>({
@@ -36,7 +43,17 @@ export default function CameraScanner({
     text: '',
   });
   const [scanWarning, setScanWarning] = useState<string>('');
-  const [cameraError, setCameraError] = useState<string>('');
+  const [liveModeActive, setLiveModeActive] = useState<boolean>(false);
+
+  const {
+    videoRef,
+    isStreaming,
+    isReady,
+    error: streamError,
+    startStream,
+    stopStream,
+    captureFrame,
+  } = useCameraStream();
 
   useEffect(() => {
     if (savedImageBase64) {
@@ -44,62 +61,16 @@ export default function CameraScanner({
     }
   }, [savedImageBase64]);
 
-  const stopCameraStream = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  }, []);
-
-  const startCameraStream = useCallback(async () => {
-    setCameraError('');
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError(
-          'ব্রাউজারে সরাসরি ক্যামেরা সাপোর্ট নেই। নিচে থাকা ক্যামেরা বাটন বা ফাইল আপলোড ব্যবহার করুন।'
-        );
-        return;
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch (err: unknown) {
-      console.warn('Direct camera access error:', err);
-      setCameraError('ক্যামেরা চালু করা যায়নি। নিচের "ক্যামেরা দিয়ে ছবি তুলুন" বা ফাইল বাটন ব্যবহার করুন।');
-      setCameraActive(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopCameraStream();
-    };
-  }, [stopCameraStream]);
-
-  // Run 100% on-device OCR (Both online and offline!)
-  const handleProcessImage = useCallback(
+  // Execute on-device OCR without blocking user interaction or form typing
+  const runOcrOnImage = useCallback(
     async (base64Image: string) => {
-      setCapturedImage(base64Image);
       setScanWarning('');
       setIsScanning(true);
       setScanProgress({ percent: 5, text: 'ছবি প্রস্তুত হচ্ছে...' });
 
       try {
         let ocrResult;
+        // Test hook for deterministic automated testing
         if (
           typeof window !== 'undefined' &&
           (window as unknown as { __MOCK_NID_SCAN__?: (img: string) => Promise<unknown> }).__MOCK_NID_SCAN__
@@ -135,8 +106,8 @@ export default function CameraScanner({
           isOffline: !isOnline,
         });
       } catch (err: unknown) {
-        console.warn('On-device OCR failed or interrupted:', err);
-        setScanWarning('অন-ডিভাইস স্ক্যানে সমস্যা হয়েছে। অনুগ্রহ করে নিচে নাম ও নম্বর হাতে লিখুন।');
+        console.warn('On-device OCR error:', err);
+        setScanWarning('স্ক্যানে সমস্যা হয়েছে। অনুগ্রহ করে নিচে নাম ও নম্বর হাতে লিখুন।');
         onScanComplete({
           imageBase64: base64Image,
           isOffline: !isOnline,
@@ -149,31 +120,22 @@ export default function CameraScanner({
     [isOnline, onScanComplete]
   );
 
-  const captureFrameFromVideo = useCallback(async () => {
-    if (!videoRef.current) return;
-    const video = videoRef.current;
+  const handleProcessImage = useCallback(
+    async (rawBase64: string) => {
+      setCapturedImage(rawBase64);
+      // Immediately notify parent with the color photo so it's guaranteed to be saved
+      onScanComplete({
+        imageBase64: rawBase64,
+        isOffline: !isOnline,
+      });
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      // Asynchronously run on-device OCR
+      runOcrOnImage(rawBase64);
+    },
+    [isOnline, onScanComplete, runOcrOnImage]
+  );
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    stopCameraStream();
-
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      try {
-        const compressed = await compressImageToBase64(blob);
-        handleProcessImage(compressed);
-      } catch (err) {
-        console.error('Image compression error:', err);
-      }
-    }, 'image/jpeg', 0.9);
-  }, [handleProcessImage, stopCameraStream]);
-
-  const handleFileSelect = useCallback(
+  const handleFileInput = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -183,6 +145,7 @@ export default function CameraScanner({
         handleProcessImage(compressed);
       } catch (err) {
         console.error('File compression error:', err);
+        setScanWarning('ছবি প্রসেস করা যায়নি। আবার চেষ্টা করুন।');
       } finally {
         if (e.target) e.target.value = '';
       }
@@ -190,146 +153,170 @@ export default function CameraScanner({
     [handleProcessImage]
   );
 
+  const handleStartLiveCamera = async () => {
+    setLiveModeActive(true);
+    await startStream();
+  };
+
+  const handleStopLiveCamera = () => {
+    stopStream();
+    setLiveModeActive(false);
+  };
+
+  const handleCaptureLive = async () => {
+    const frame = await captureFrame();
+    if (frame) {
+      setLiveModeActive(false);
+      handleProcessImage(frame);
+    }
+  };
+
   const handleRetake = () => {
     setCapturedImage('');
     setScanWarning('');
     setScanProgress({ percent: 0, text: '' });
+    handleStopLiveCamera();
     if (onClearImage) onClearImage();
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-          <Camera className="w-4 h-4 text-emerald-700" />
-          <span>এনআইডি কার্ডের ছবি তুলুন (বাধ্যতামূলক)</span>
-        </label>
-        {capturedImage && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-            <Check className="w-3 h-3" />
-            <span>ছবি সংরক্ষিত</span>
-          </span>
-        )}
-      </div>
-
-      {/* Hidden file inputs for hardware compatibility */}
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+      {/* Hidden Hardware Inputs */}
       <input
-        ref={fileInputRef}
+        ref={cameraInputRef}
         type="file"
         accept="image/*"
         capture="environment"
-        onChange={handleFileSelect}
+        onChange={handleFileInput}
         className="hidden"
       />
       <input
         ref={galleryInputRef}
         type="file"
         accept="image/*"
-        onChange={handleFileSelect}
+        onChange={handleFileInput}
         className="hidden"
       />
 
-      {/* Viewport Area */}
-      <div className="relative w-full aspect-16/10 bg-slate-950 rounded-xl overflow-hidden border border-slate-300 flex items-center justify-center">
+      {/* Header Label */}
+      <div className="flex items-center justify-between">
+        <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+          <Camera className="w-4 h-4 text-emerald-700" />
+          <span>এনআইডি কার্ডের ছবি (বাধ্যতামূলক)</span>
+        </label>
+        {capturedImage && (
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+            <Check className="w-3 h-3 text-emerald-600" />
+            <span>ছবি সংরক্ষিত</span>
+          </span>
+        )}
+      </div>
+
+      {/* Fixed Aspect Ratio Viewport (85.6mm x 54mm -> aspect-[1.586/1]) */}
+      <div className="relative w-full aspect-[1.586/1] bg-slate-900 rounded-xl overflow-hidden border border-slate-300 flex items-center justify-center shadow-inner">
         {capturedImage ? (
-          // Captured Image Preview
+          // Captured Image Preview (Real Color <img>)
           <div className="relative w-full h-full flex items-center justify-center bg-black">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={capturedImage}
-              alt="ক্যাপচার করা এনআইডি"
-              className="max-w-full max-h-full object-contain"
+              alt="এনআইডি প্রিভিউ"
+              className="w-full h-full object-contain"
             />
 
-            {/* On-Device OCR Progress Overlay */}
+            {/* OCR Inline Progress Overlay */}
             {isScanning && (
-              <div className="absolute inset-0 bg-slate-900/85 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
-                <div className="relative w-14 h-14 flex items-center justify-center mb-3">
-                  <div className="absolute inset-0 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
-                  <Sparkles className="w-6 h-6 text-emerald-300 animate-pulse" />
+              <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
+                <div className="relative w-12 h-12 flex items-center justify-center mb-2.5">
+                  <div className="absolute inset-0 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                  <Sparkles className="w-5 h-5 text-emerald-300 animate-pulse" />
                 </div>
-                <div className="text-white text-sm font-semibold">
+                <div className="text-white text-xs font-semibold">
                   {scanProgress.text || 'এনআইডি কার্ড অন-ডিভাইস স্ক্যান হচ্ছে...'}
                 </div>
-                <div className="w-48 bg-slate-700 rounded-full h-2 mt-2.5 overflow-hidden">
+                <div className="w-44 bg-slate-700 rounded-full h-1.5 mt-2 overflow-hidden">
                   <div
-                    className="bg-emerald-400 h-full transition-all duration-300"
+                    className="bg-emerald-400 h-full transition-all duration-200"
                     style={{ width: `${Math.max(scanProgress.percent, 10)}%` }}
                   ></div>
                 </div>
-                <div className="text-emerald-300 text-xs mt-1.5 font-mono font-bold">
+                <div className="text-emerald-300 text-[11px] mt-1 font-mono font-bold">
                   {scanProgress.percent}%
-                </div>
-                <div className="text-slate-300 text-[11px] mt-1">
-                  ১০০% অন-ডিভাইস অফলাইন ওসিআর
                 </div>
               </div>
             )}
           </div>
-        ) : cameraActive ? (
-          // Live Video Feed with Card Framing Overlay
+        ) : liveModeActive && isStreaming ? (
+          // WebRTC Live Stream Viewport
           <div className="relative w-full h-full">
             <video
               ref={videoRef}
+              autoPlay
               playsInline
               muted
               className="w-full h-full object-cover"
             />
-            {/* NID Card Framing Guide */}
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-4">
-              <div className="w-[88%] aspect-85/54 border-2 border-dashed border-emerald-400/90 rounded-xl shadow-[0_0_0_9999px_rgba(0,0,0,0.5)] flex flex-col justify-between p-2">
-                <div className="text-[11px] font-medium text-emerald-300 bg-black/60 px-2 py-0.5 rounded self-start">
-                  এনআইডি ফ্রেম
-                </div>
-                <div className="text-[11px] text-center text-white/90 bg-black/50 py-0.5 rounded">
-                  কার্ডটি ফ্রেমের সমান্তরালে রাখুন
-                </div>
+            {/* Framing Guide */}
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
+              <div className="w-[90%] aspect-[1.586/1] border-2 border-dashed border-emerald-400 rounded-xl flex flex-col justify-between p-2 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                <span className="text-[10px] font-semibold text-emerald-300 bg-black/60 px-2 py-0.5 rounded self-start">
+                  এনআইডি কার্ড ফ্রেম
+                </span>
+                <span className="text-[10px] text-center text-white/90 bg-black/50 py-0.5 rounded">
+                  কার্ডটি ফ্রেমের ভেতরে সোজা রাখুন
+                </span>
               </div>
             </div>
+            {/* Live Camera Cancel Button */}
+            <button
+              type="button"
+              onClick={handleStopLiveCamera}
+              className="absolute top-2 right-2 p-1.5 bg-black/70 text-white rounded-full hover:bg-black"
+              aria-label="ক্যামেরা বন্ধ করুন"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         ) : (
-          // Placeholder State
-          <div className="text-center p-6 text-slate-400">
-            <div className="w-14 h-14 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center mx-auto mb-2">
-              <Camera className="w-7 h-7" />
+          // Clean Placeholder UI
+          <div className="text-center p-4 text-slate-400 flex flex-col items-center justify-center">
+            <div className="w-12 h-12 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center mb-2">
+              <Camera className="w-6 h-6" />
             </div>
-            <p className="text-xs text-slate-300 font-medium">
-              সরাসরি ক্যামেরা দিয়ে তুলুন অথবা গ্যালারি থেকে ছবি দিন
+            <p className="text-xs text-slate-200 font-semibold">
+              পরিষ্কার আলোতে এনআইডি কার্ডের ছবি তুলুন
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              স্মার্ট কার্ড বা পুরোনো ল্যামিনেটেড কার্ড
             </p>
           </div>
         )}
       </div>
 
-      {/* Helpful Field Tip */}
-      <div className="mt-2 text-center">
-        <p className="text-[11px] text-slate-500 font-medium">
-          💡 টিপস: পরিষ্কার আলোতে কার্ডটি ফ্রেমের ভেতর সোজা ধরলে বাংলা নাম ও নম্বর সবচেয়ে নির্ভুল স্ক্যান হবে।
+      {/* Warning or Error Container (Compact, non-shifting) */}
+      {(scanWarning || streamError) && (
+        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-xs text-amber-800">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <span className="leading-snug">{scanWarning || streamError}</span>
+        </div>
+      )}
+
+      {/* Field Volunteer Tip */}
+      <div className="text-center">
+        <p className="text-[11px] text-slate-500 font-medium leading-tight">
+          💡 কার্ডটি ফ্রেমের ভেতর সোজা ধরুন। প্রয়োজনে নিচে ম্যানুয়ালি নাম ও নম্বর লিখুন।
         </p>
       </div>
 
-      {/* Warnings & Status Notes */}
-      {scanWarning && (
-        <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 text-xs text-amber-800">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <span>{scanWarning}</span>
-        </div>
-      )}
-
-      {cameraError && (
-        <div className="mt-2.5 p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
-          {cameraError}
-        </div>
-      )}
-
-      {/* Action Buttons (Min 48px Touch Targets) */}
-      <div className="mt-3.5 grid grid-cols-2 gap-2.5">
+      {/* Primary Touch-Friendly Action Buttons (Min 48px height) */}
+      <div className="grid grid-cols-2 gap-2 pt-1">
         {capturedImage ? (
           <>
             <button
               type="button"
-              onClick={() => handleProcessImage(capturedImage)}
+              onClick={() => runOcrOnImage(capturedImage)}
               disabled={isScanning}
-              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 active:scale-98 transition-all disabled:opacity-50"
+              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 active:scale-98 transition-all disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4 text-emerald-600" />
               <span>আবার স্ক্যান করুন</span>
@@ -338,68 +325,58 @@ export default function CameraScanner({
               type="button"
               onClick={handleRetake}
               disabled={isScanning}
-              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all disabled:opacity-50"
+              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all disabled:opacity-50"
             >
               <RefreshCw className="w-4 h-4 text-slate-500" />
-              <span>পুনরায় ছবি তুলুন</span>
+              <span>নতুন ছবি তুলুন</span>
             </button>
           </>
-        ) : cameraActive ? (
+        ) : liveModeActive && isStreaming ? (
           <>
             <button
               type="button"
-              onClick={captureFrameFromVideo}
-              className="col-span-1 min-h-[50px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 shadow-md active:scale-98 transition-all"
+              onClick={handleCaptureLive}
+              disabled={!isReady}
+              className="col-span-2 min-h-[50px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 shadow-md active:scale-98 transition-all disabled:opacity-50"
             >
               <Camera className="w-5 h-5" />
-              <span>ছবি তুলুন</span>
-            </button>
-            <button
-              type="button"
-              onClick={stopCameraStream}
-              className="col-span-1 min-h-[50px] inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all"
-            >
-              <span>ক্যামেরা বন্ধ</span>
+              <span>{isReady ? 'ছবি তুলুন' : 'ক্যামেরা প্রস্তুত হচ্ছে...'}</span>
             </button>
           </>
         ) : (
           <>
+            {/* Primary Button 1: Hardware Camera (Direct & 100% reliable) */}
             <button
               type="button"
-              onClick={() => {
-                startCameraStream().catch(() => {
-                  fileInputRef.current?.click();
-                });
-              }}
-              className="min-h-[50px] inline-flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 shadow-md active:scale-98 transition-all"
+              onClick={() => cameraInputRef.current?.click()}
+              className="col-span-1 min-h-[50px] inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold rounded-xl bg-emerald-700 text-white hover:bg-emerald-800 shadow-md active:scale-98 transition-all"
             >
-              <Camera className="w-5 h-5" />
-              <span>ক্যামেরা চালু</span>
+              <Camera className="w-4 h-4" />
+              <span>ক্যামেরা দিয়ে ছবি তুলুন</span>
             </button>
 
+            {/* Primary Button 2: Gallery Picker */}
             <button
               type="button"
               onClick={() => galleryInputRef.current?.click()}
-              className="min-h-[50px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all"
+              className="col-span-1 min-h-[50px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-200 active:scale-98 transition-all border border-slate-200"
             >
-              <ImageIcon className="w-4 h-4 text-slate-500" />
+              <ImageIcon className="w-4 h-4 text-slate-600" />
               <span>গ্যালারি / ফাইল</span>
+            </button>
+
+            {/* Secondary Option: In-Browser Live Preview */}
+            <button
+              type="button"
+              onClick={handleStartLiveCamera}
+              className="col-span-2 py-1 text-[11px] text-emerald-800 font-medium hover:underline inline-flex items-center justify-center gap-1"
+            >
+              <Video className="w-3.5 h-3.5 text-emerald-700" />
+              <span>লাইভ ক্যামেরা প্রিভিউ ব্যবহার করতে চান? এখানে চাপুন</span>
             </button>
           </>
         )}
       </div>
-
-      {!capturedImage && !cameraActive && (
-        <div className="mt-2 text-center">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-xs text-emerald-800 hover:underline font-medium py-1"
-          >
-            ফোনের ডিফল্ট ক্যামেরা দিয়ে সরাসরি ছবি তুলতে এখানে চাপুন
-          </button>
-        </div>
-      )}
     </div>
   );
 }

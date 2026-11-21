@@ -1,14 +1,9 @@
 'use client';
 
 import type { Worker } from 'tesseract.js';
+import { ScanResult, NidScannerEngine } from './nid-scanner.interface';
 
-export interface OnDeviceScanResult {
-  nidName: string;
-  nidNumber: string;
-  confidence: 'high' | 'medium' | 'low';
-  warning: string;
-  rawText: string;
-}
+export type OnDeviceScanResult = ScanResult;
 
 const BANGLA_TO_ENGLISH_DIGITS: Record<string, string> = {
   '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
@@ -81,11 +76,10 @@ async function preprocessImageForOcr(imageDataUrl: string): Promise<string> {
       const imageData = ctx.getImageData(0, 0, width, height);
       const data = imageData.data;
 
-      // Pass 1: Grayscale & find dynamic range (5th-95th approx via min/max clamp)
+      // Pass 1: Grayscale & find dynamic range
       const grays = new Uint8ClampedArray(width * height);
       const hist = new Uint32Array(256);
       for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        // Weighted luminance that naturally fades cyan/green/light-blue BD NID watermarks
         const g = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
         grays[p] = g;
         hist[g]++;
@@ -117,7 +111,6 @@ async function preprocessImageForOcr(imageDataUrl: string): Promise<string> {
         let norm = (grays[p] - lowCut) / range;
         if (norm < 0) norm = 0;
         if (norm > 1) norm = 1;
-        // Mild S-curve push toward black/white while preserving Bengali vowel signs
         const boosted = norm > 0.72 ? 255 : Math.round(Math.pow(norm, 1.35) * 255);
         data[i] = boosted;
         data[i + 1] = boosted;
@@ -134,7 +127,6 @@ async function preprocessImageForOcr(imageDataUrl: string): Promise<string> {
 function cleanBanglaName(line: string): string {
   return line
     .replace(/^(নাম|ন[াো]ম|Name)\s*[:ঃ\-।.]*\s*/i, '')
-    // Keep Bengali Unicode block, spaces, dot, hyphen
     .replace(/[^\u0980-\u09FF\s.\-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -151,7 +143,7 @@ function cleanEnglishName(line: string): string {
 function extractNidNumber(rawText: string): string {
   const normalized = toEnglishDigits(rawText);
 
-  // Priority 1: Explicitly labeled NID No / ID NO (handles Smart Card "123 456 7890" & Old 13/17 digits)
+  // Priority 1: Explicitly labeled NID No / ID NO
   const labeledMatch = normalized.match(
     /(?:NID\s*N[o0.]*|ID\s*N[o0.]*|আইডি\s*নং|নম্বর)\s*[:\-.\s]*([0-9][0-9\s\-]{8,22}[0-9])/i
   );
@@ -197,7 +189,6 @@ export function parseBangladeshNidText(rawText: string): { nidName: string; nidN
         nidName = sameLine;
         break;
       }
-      // Check next 1-2 lines (Smart NID layout)
       for (let j = i + 1; j <= Math.min(i + 2, lines.length - 1); j++) {
         if (/Name|পিতা|মাতা|Date|Birth/i.test(lines[j])) break;
         const nextClean = cleanBanglaName(lines[j]);
@@ -227,7 +218,7 @@ export function parseBangladeshNidText(rawText: string): { nidName: string; nidN
     }
   }
 
-  // Strategy 3: Fallback to English Name if Bangla text was totally unreadable
+  // Strategy 3: Fallback to English Name if Bangla text was unreadable
   if (!nidName) {
     for (let i = 0; i < lines.length; i++) {
       if (/\bName\b/i.test(lines[i])) {
@@ -254,7 +245,7 @@ export function parseBangladeshNidText(rawText: string): { nidName: string; nidN
 export async function scanBangladeshNidOnDevice(
   imageDataUrl: string,
   onProgress?: (percent: number, statusText: string) => void
-): Promise<OnDeviceScanResult> {
+): Promise<ScanResult> {
   currentProgressCb = onProgress || null;
   try {
     onProgress?.(5, 'ছবি পরিষ্কার করা হচ্ছে...');
@@ -288,3 +279,7 @@ export async function scanBangladeshNidOnDevice(
     currentProgressCb = null;
   }
 }
+
+export const tesseractNidScanner: NidScannerEngine = {
+  scan: scanBangladeshNidOnDevice,
+};

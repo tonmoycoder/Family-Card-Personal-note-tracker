@@ -132,6 +132,9 @@ export async function processOfflineQueue(
   try {
     const items = await getAllQueuedEntries();
     const runnable = items.filter((i) => i.status === 'pending' || i.status === 'failed');
+    if (runnable.length === 0) {
+      return { uploaded: 0, failed: 0, duplicates: 0 };
+    }
 
     for (const current of runnable) {
       if (!navigator.onLine) break;
