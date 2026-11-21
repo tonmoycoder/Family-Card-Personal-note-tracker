@@ -29,6 +29,10 @@ export interface ScanResponseData {
   confidence: 'high' | 'medium' | 'low';
   warning: string;
   rawText?: string;
+  cleanedText?: string;
+  cleanedLines?: string[];
+  suggestedName?: string;
+  suggestedNid?: string;
 }
 
 export interface RecordsApiResponse {

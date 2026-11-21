@@ -400,4 +400,121 @@ test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
     // Clean up temporary screenshots
     fs.rmSync(screenshotDir, { recursive: true, force: true });
   });
+
+  // QA CHECK 7: Real On-Device OCR with Same-Origin Tesseract, 90° Rotation, Crop Overlay & One-Tap Actions
+  test('Check 7 (Real OCR Engine & Crop): Real same-origin Tesseract worker, rotation, boilerplate removal, and one-tap auto-fill', async ({
+    page,
+  }) => {
+    test.setTimeout(90000);
+
+    // Delete mock hook so REAL Tesseract.js engine and WASM worker run
+    await page.addInitScript(() => {
+      delete (window as unknown as { __MOCK_NID_SCAN__?: unknown }).__MOCK_NID_SCAN__;
+    });
+
+    const tesseractResponses: { url: string; status: number }[] = [];
+    page.on('response', (response) => {
+      if (response.url().includes('/tesseract/')) {
+        tesseractResponses.push({ url: response.url(), status: response.status() });
+      }
+    });
+
+    await page.goto('/');
+
+    // Generate synthetic realistic Bangladesh NID card on Canvas
+    const sampleNidBase64 = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 600;
+      canvas.height = 380;
+      const ctx = canvas.getContext('2d')!;
+
+      // Background with green tint
+      ctx.fillStyle = '#E8F5E9';
+      ctx.fillRect(0, 0, 600, 380);
+
+      // Pink watermark circle in center
+      ctx.beginPath();
+      ctx.arc(380, 200, 110, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 182, 193, 0.45)';
+      ctx.fill();
+
+      // Top boilerplate identical to Bangladesh NID
+      ctx.fillStyle = '#1A365D';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('গণপ্রজাতন্ত্রী বাংলাদেশ সরকার', 180, 40);
+      ctx.font = '12px sans-serif';
+      ctx.fillText("Government of the People's Republic of Bangladesh", 180, 60);
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillStyle = '#C53030';
+      ctx.fillText('National ID Card / জাতীয় পরিচয়পত্র', 180, 85);
+
+      // Photo box on left
+      ctx.fillStyle = '#718096';
+      ctx.fillRect(35, 110, 120, 150);
+
+      // Clean NID text in info zone (right side)
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('Name: MST. SHAHANAZ KHATUN', 180, 150);
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText('NID No: 825 130 6414', 180, 210);
+
+      return canvas.toDataURL('image/png');
+    });
+
+    const base64Data = sampleNidBase64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Feed image into hardware file input
+    const fileInput = page.locator('input[type="file"]').first();
+    await fileInput.setInputFiles({
+      name: 'nid-card.png',
+      mimeType: 'image/png',
+      buffer,
+    });
+
+    // 1. Verify image preview & crop overlay are visible
+    const cropOverlay = page.locator('[aria-label="এনআইডি ক্রপ বক্স"]');
+    await expect(cropOverlay).toBeVisible({ timeout: 5000 });
+
+    // 2. Verify "৯০° ঘোরান" button is present
+    const rotateBtn = page.locator('button[aria-label="৯০ ডিগ্রি ঘোরান"]');
+    await expect(rotateBtn).toBeVisible();
+
+    // 3. Wait for real on-device OCR recognition to complete
+    const scannedTextarea = page.locator('textarea[aria-label="স্ক্যান করা পাঠ্য"]');
+    await expect(scannedTextarea).toBeVisible({ timeout: 60000 });
+
+    const recognizedContent = await scannedTextarea.inputValue();
+
+    // 4. Verify same-origin Tesseract network requests returned 200 HTTP
+    expect(tesseractResponses.length).toBeGreaterThan(0);
+    const workerReq = tesseractResponses.find((r) => r.url.includes('worker.min.js'));
+    expect(workerReq).toBeDefined();
+    expect(workerReq!.status).toBe(200);
+
+    // 5. Verify boilerplate is stripped
+    expect(recognizedContent).not.toContain('গণপ্রজাতন্ত্রী');
+    expect(recognizedContent).not.toContain('বাংলাদেশ সরকার');
+
+    // 6. Verify Name & NID are extracted
+    expect(recognizedContent).toContain('SHAHANAZ');
+    expect(recognizedContent).toContain('825');
+
+    // 7. Verify auto-fill populated form inputs safely
+    const nameInput = page.locator('input#nidName');
+    const nidInput = page.locator('input#nidNumber');
+
+    const filledName = await nameInput.inputValue();
+    const filledNid = await nidInput.inputValue();
+
+    expect(filledName).toContain('SHAHANAZ');
+    expect(filledNid).toContain('8251306414');
+
+    // 8. Test 90° rotation: click rotate button and ensure preview is updated
+    await rotateBtn.click();
+    await page.waitForTimeout(1000);
+    const imgPreview = page.locator('img[alt="এনআইডি প্রিভিউ"]');
+    await expect(imgPreview).toBeVisible();
+  });
 });

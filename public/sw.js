@@ -1,5 +1,5 @@
-const CACHE_NAME = 'family-card-survey-v2';
-const TESSERACT_CACHE = 'tesseract-assets-v1';
+const CACHE_NAME = 'family-card-survey-v3';
+const TESSERACT_CACHE = 'tesseract-assets-v3';
 
 const STATIC_ASSETS = [
   '/',
@@ -39,15 +39,16 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Network-only for API requests - never cache POST/GET survey data
+  // Network-only for API requests - never cache POST/GET/DELETE survey data
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(request));
     return;
   }
 
-  // Cache-First strategy for Tesseract WASM, Worker, and traineddata models
-  // This guarantees 100% offline on-device scanning in rural field areas
+  // Cache-First strategy for same-origin /tesseract/* assets and models
+  // This guarantees 100% offline, fast on-device scanning even on Brave mobile
   if (
+    url.pathname.startsWith('/tesseract/') ||
     url.hostname.includes('projectnaptha.com') ||
     url.hostname.includes('jsdelivr.net') ||
     url.pathname.endsWith('.traineddata.gz') ||

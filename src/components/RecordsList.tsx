@@ -110,13 +110,12 @@ export default function RecordsList({ isOnline }: RecordsListProps) {
       {toastMessage && (
         <div
           role="alert"
-          className={`fixed top-14 left-4 right-4 z-50 p-3.5 rounded-xl shadow-lg border text-xs font-semibold flex items-center justify-between transition-all transform animate-in fade-in slide-in-from-top-2 ${
-            toastMessage.type === 'success'
-              ? 'bg-emerald-800 text-white border-emerald-700'
-              : toastMessage.type === 'error'
+          className={`fixed top-14 left-4 right-4 z-50 p-3.5 rounded-xl shadow-lg border text-xs font-semibold flex items-center justify-between transition-all transform animate-in fade-in slide-in-from-top-2 ${toastMessage.type === 'success'
+            ? 'bg-emerald-800 text-white border-emerald-700'
+            : toastMessage.type === 'error'
               ? 'bg-rose-800 text-white border-rose-700'
               : 'bg-amber-800 text-white border-amber-700'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2">
             {toastMessage.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0" />}
@@ -180,31 +179,28 @@ export default function RecordsList({ isOnline }: RecordsListProps) {
         </span>
         <button
           onClick={() => setSortMode('newest')}
-          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${
-            sortMode === 'newest'
-              ? 'bg-emerald-700 text-white font-bold shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${sortMode === 'newest'
+            ? 'bg-emerald-700 text-white font-bold shadow-2xs'
+            : 'text-slate-600 hover:bg-slate-100'
+            }`}
         >
           নতুন তারিখ আগে
         </button>
         <button
           onClick={() => setSortMode('oldest')}
-          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${
-            sortMode === 'oldest'
-              ? 'bg-emerald-700 text-white font-bold shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${sortMode === 'oldest'
+            ? 'bg-emerald-700 text-white font-bold shadow-2xs'
+            : 'text-slate-600 hover:bg-slate-100'
+            }`}
         >
           পুরোনো তারিখ আগে
         </button>
         <button
           onClick={() => setSortMode('area')}
-          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${
-            sortMode === 'area'
-              ? 'bg-emerald-700 text-white font-bold shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${sortMode === 'area'
+            ? 'bg-emerald-700 text-white font-bold shadow-2xs'
+            : 'text-slate-600 hover:bg-slate-100'
+            }`}
         >
           এলাকা অনুযায়ী
         </button>
@@ -237,11 +233,10 @@ export default function RecordsList({ isOnline }: RecordsListProps) {
           <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
             <button
               onClick={() => setSelectedArea('all')}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-colors ${
-                selectedArea === 'all'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-colors ${selectedArea === 'all'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
             >
               সব এলাকা ({records.length})
             </button>
@@ -249,11 +244,10 @@ export default function RecordsList({ isOnline }: RecordsListProps) {
               <button
                 key={area}
                 onClick={() => setSelectedArea(area)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-colors ${
-                  selectedArea === area
-                    ? 'bg-emerald-700 text-white shadow-xs'
-                    : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-colors ${selectedArea === area
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
               >
                 {area}
               </button>

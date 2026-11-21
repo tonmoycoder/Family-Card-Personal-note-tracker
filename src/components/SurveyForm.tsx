@@ -123,17 +123,38 @@ export default function SurveyForm({
 
       if (data.scannedData) {
         setNeedsScan(false);
-        if (data.scannedData.nidName) {
-          setNidName((prev) => (prev.trim() ? prev : data.scannedData!.nidName));
-          setLocalKnownName((prev) => (prev.trim() ? prev : data.scannedData!.nidName));
+        const nameToUse = data.scannedData.nidName || data.scannedData.suggestedName;
+        const nidToUse = data.scannedData.nidNumber || data.scannedData.suggestedNid;
+
+        // Conservative Safe Auto-Fill: only fill empty fields, never overwrite volunteer edits!
+        if (nameToUse) {
+          setNidName((prev) => (prev.trim() ? prev : nameToUse));
+          setLocalKnownName((prev) => (prev.trim() ? prev : nameToUse));
         }
-        if (data.scannedData.nidNumber) {
-          setNidNumber((prev) => (prev.trim() ? prev : data.scannedData!.nidNumber));
+        if (nidToUse) {
+          setNidNumber((prev) => (prev.trim() ? prev : nidToUse));
         }
         if (data.scannedData.detectedAddressArea) {
           setScannedAreaHint(data.scannedData.detectedAddressArea);
         }
         showToast('এনআইডি তথ্য সফলভাবে পড়া হয়েছে!', 'success');
+      }
+    },
+    []
+  );
+
+  const handleApplyField = useCallback(
+    (field: 'nidName' | 'localKnownName' | 'nidNumber', value: string) => {
+      if (field === 'nidName') {
+        setNidName(value);
+        setLocalKnownName((prev) => (prev.trim() ? prev : value));
+        showToast('এনআইডি নাম ফর্মে বসানো হয়েছে', 'info');
+      } else if (field === 'localKnownName') {
+        setLocalKnownName(value);
+        showToast('স্থানীয় পরিচিত নাম ফর্মে বসানো হয়েছে', 'info');
+      } else if (field === 'nidNumber') {
+        setNidNumber(value);
+        showToast('এনআইডি নম্বর ফর্মে বসানো হয়েছে', 'info');
       }
     },
     []
@@ -317,6 +338,7 @@ export default function SurveyForm({
         onScanComplete={handleScanComplete}
         onClearImage={handleClearImage}
         savedImageBase64={imageBase64}
+        onApplyField={handleApplyField}
       />
 
       {/* 2. Field GPS Location Tracker */}
