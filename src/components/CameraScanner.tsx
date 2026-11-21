@@ -3,6 +3,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Camera, RefreshCw, Sparkles, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import { compressImageToBase64 } from '@/lib/image-utils';
+import { scanBangladeshNidOnDevice } from '@/lib/nid-ocr';
 import { ScanResponseData } from '@/lib/types';
 
 interface CameraScannerProps {
@@ -30,6 +31,10 @@ export default function CameraScanner({
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [capturedImage, setCapturedImage] = useState<string>(savedImageBase64 || '');
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [scanProgress, setScanProgress] = useState<{ percent: number; text: string }>({
+    percent: 0,
+    text: '',
+  });
   const [scanWarning, setScanWarning] = useState<string>('');
   const [cameraError, setCameraError] = useState<string>('');
 
@@ -51,7 +56,9 @@ export default function CameraScanner({
     setCameraError('');
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError('ব্রাউজারে সরাসরি ক্যামেরা সাপোর্ট নেই। নিচে থাকা ক্যামেরা বাটন বা ফাইল আপলোড ব্যবহার করুন।');
+        setCameraError(
+          'ব্রাউজারে সরাসরি ক্যামেরা সাপোর্ট নেই। নিচে থাকা ক্যামেরা বাটন বা ফাইল আপলোড ব্যবহার করুন।'
+        );
         return;
       }
 
@@ -83,55 +90,60 @@ export default function CameraScanner({
     };
   }, [stopCameraStream]);
 
+  // Run 100% on-device OCR (Both online and offline!)
   const handleProcessImage = useCallback(
     async (base64Image: string) => {
       setCapturedImage(base64Image);
       setScanWarning('');
-
-      if (!isOnline) {
-        // Offline: preserve image and notify parent to defer OCR until sync
-        onScanComplete({
-          imageBase64: base64Image,
-          isOffline: true,
-        });
-        return;
-      }
-
-      // Online: Call OCR endpoint
       setIsScanning(true);
-      try {
-        const res = await fetch('/api/scan-nid', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64Image }),
-        });
+      setScanProgress({ percent: 5, text: 'ছবি প্রস্তুত হচ্ছে...' });
 
-        const json = await res.json();
-        if (json.success && json.data) {
-          if (json.data.warning) {
-            setScanWarning(json.data.warning);
-          }
-          onScanComplete({
-            imageBase64: base64Image,
-            scannedData: json.data,
-            isOffline: false,
-          });
+      try {
+        let ocrResult;
+        if (
+          typeof window !== 'undefined' &&
+          (window as unknown as { __MOCK_NID_SCAN__?: (img: string) => Promise<unknown> }).__MOCK_NID_SCAN__
+        ) {
+          ocrResult = (await (
+            window as unknown as { __MOCK_NID_SCAN__: (img: string) => Promise<unknown> }
+          ).__MOCK_NID_SCAN__(base64Image)) as {
+            nidName: string;
+            nidNumber: string;
+            confidence: 'high' | 'medium' | 'low';
+            warning: string;
+            rawText: string;
+          };
         } else {
-          setScanWarning(json.error || 'ছবি থেকে তথ্য পড়া যায়নি, প্রয়োজনে নাম ও নম্বর টাইপ করুন।');
-          onScanComplete({
-            imageBase64: base64Image,
-            isOffline: false,
+          ocrResult = await scanBangladeshNidOnDevice(base64Image, (percent, text) => {
+            setScanProgress({ percent, text });
           });
         }
-      } catch (err) {
-        console.error('Scan error:', err);
-        setScanWarning('স্ক্যান সার্ভারে সমস্যা হয়েছে। এনআইডি হাতে লিখুন।');
+
+        if (ocrResult.warning) {
+          setScanWarning(ocrResult.warning);
+        }
+
         onScanComplete({
           imageBase64: base64Image,
-          isOffline: false,
+          scannedData: {
+            nidName: ocrResult.nidName,
+            nidNumber: ocrResult.nidNumber,
+            confidence: ocrResult.confidence,
+            warning: ocrResult.warning,
+            rawText: ocrResult.rawText,
+          },
+          isOffline: !isOnline,
+        });
+      } catch (err: unknown) {
+        console.warn('On-device OCR failed or interrupted:', err);
+        setScanWarning('অন-ডিভাইস স্ক্যানে সমস্যা হয়েছে। অনুগ্রহ করে নিচে নাম ও নম্বর হাতে লিখুন।');
+        onScanComplete({
+          imageBase64: base64Image,
+          isOffline: !isOnline,
         });
       } finally {
         setIsScanning(false);
+        setScanProgress({ percent: 0, text: '' });
       }
     },
     [isOnline, onScanComplete]
@@ -181,6 +193,7 @@ export default function CameraScanner({
   const handleRetake = () => {
     setCapturedImage('');
     setScanWarning('');
+    setScanProgress({ percent: 0, text: '' });
     if (onClearImage) onClearImage();
   };
 
@@ -228,15 +241,28 @@ export default function CameraScanner({
               className="max-w-full max-h-full object-contain"
             />
 
-            {/* AI Scanning Overlay */}
+            {/* On-Device OCR Progress Overlay */}
             {isScanning && (
-              <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
+              <div className="absolute inset-0 bg-slate-900/85 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
                 <div className="relative w-14 h-14 flex items-center justify-center mb-3">
                   <div className="absolute inset-0 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
                   <Sparkles className="w-6 h-6 text-emerald-300 animate-pulse" />
                 </div>
-                <div className="text-white text-sm font-semibold">এনআইডি কার্ড স্ক্যান হচ্ছে...</div>
-                <div className="text-emerald-200 text-xs mt-1">নাম ও নম্বর অটো-ডিটেক্ট করা হচ্ছে</div>
+                <div className="text-white text-sm font-semibold">
+                  {scanProgress.text || 'এনআইডি কার্ড অন-ডিভাইস স্ক্যান হচ্ছে...'}
+                </div>
+                <div className="w-48 bg-slate-700 rounded-full h-2 mt-2.5 overflow-hidden">
+                  <div
+                    className="bg-emerald-400 h-full transition-all duration-300"
+                    style={{ width: `${Math.max(scanProgress.percent, 10)}%` }}
+                  ></div>
+                </div>
+                <div className="text-emerald-300 text-xs mt-1.5 font-mono font-bold">
+                  {scanProgress.percent}%
+                </div>
+                <div className="text-slate-300 text-[11px] mt-1">
+                  ১০০% অন-ডিভাইস অফলাইন ওসিআর
+                </div>
               </div>
             )}
           </div>
@@ -274,6 +300,13 @@ export default function CameraScanner({
         )}
       </div>
 
+      {/* Helpful Field Tip */}
+      <div className="mt-2 text-center">
+        <p className="text-[11px] text-slate-500 font-medium">
+          💡 টিপস: পরিষ্কার আলোতে কার্ডটি ফ্রেমের ভেতর সোজা ধরলে বাংলা নাম ও নম্বর সবচেয়ে নির্ভুল স্ক্যান হবে।
+        </p>
+      </div>
+
       {/* Warnings & Status Notes */}
       {scanWarning && (
         <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 text-xs text-amber-800">
@@ -288,23 +321,24 @@ export default function CameraScanner({
         </div>
       )}
 
-      {!isOnline && capturedImage && (
-        <div className="mt-2.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-xs text-amber-900 font-medium">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <span>
-            অফলাইন আছেন — ছবি সেভ হয়েছে। ইন্টারনেট পেলেই নাম ও এনআইডি অটোমেটিক স্ক্যান হয়ে আপলোড হবে।
-          </span>
-        </div>
-      )}
-
       {/* Action Buttons (Min 48px Touch Targets) */}
       <div className="mt-3.5 grid grid-cols-2 gap-2.5">
         {capturedImage ? (
           <>
             <button
               type="button"
+              onClick={() => handleProcessImage(capturedImage)}
+              disabled={isScanning}
+              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 active:scale-98 transition-all disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4 text-emerald-600" />
+              <span>আবার স্ক্যান করুন</span>
+            </button>
+            <button
+              type="button"
               onClick={handleRetake}
-              className="col-span-2 min-h-[48px] inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all"
+              disabled={isScanning}
+              className="col-span-1 min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-98 transition-all disabled:opacity-50"
             >
               <RefreshCw className="w-4 h-4 text-slate-500" />
               <span>পুনরায় ছবি তুলুন</span>
@@ -333,7 +367,6 @@ export default function CameraScanner({
             <button
               type="button"
               onClick={() => {
-                // Try live preview or fallback to camera input
                 startCameraStream().catch(() => {
                   fileInputRef.current?.click();
                 });

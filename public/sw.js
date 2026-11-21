@@ -1,4 +1,6 @@
-const CACHE_NAME = 'family-card-survey-v1';
+const CACHE_NAME = 'family-card-survey-v2';
+const TESSERACT_CACHE = 'tesseract-assets-v1';
+
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -23,7 +25,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key !== CACHE_NAME && key !== TESSERACT_CACHE) {
             return caches.delete(key);
           }
         })
@@ -40,6 +42,32 @@ self.addEventListener('fetch', (event) => {
   // Network-only for API requests - never cache POST/GET survey data
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(request));
+    return;
+  }
+
+  // Cache-First strategy for Tesseract WASM, Worker, and traineddata models
+  // This guarantees 100% offline on-device scanning in rural field areas
+  if (
+    url.hostname.includes('projectnaptha.com') ||
+    url.hostname.includes('jsdelivr.net') ||
+    url.pathname.endsWith('.traineddata.gz') ||
+    url.pathname.endsWith('.wasm')
+  ) {
+    event.respondWith(
+      caches.open(TESSERACT_CACHE).then((cache) => {
+        return cache.match(request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return fetch(request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(request, networkResponse.clone());
+            }
+            return networkResponse;
+          });
+        });
+      })
+    );
     return;
   }
 

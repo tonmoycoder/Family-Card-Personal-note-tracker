@@ -141,24 +141,6 @@ export async function processOfflineQueue(
       if (onProgress) onProgress(await getAllQueuedEntries());
 
       try {
-        if (working.needsScan && working.imageBase64 && (!working.nidName || !working.nidNumber)) {
-          const scanRes = await fetch('/api/scan-nid', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageBase64: working.imageBase64 }),
-          });
-          if (scanRes.ok) {
-            const scanJson = await scanRes.json();
-            if (scanJson.success && scanJson.data) {
-              working.nidName = working.nidName || scanJson.data.nidName || '';
-              working.nidNumber = working.nidNumber || scanJson.data.nidNumber || '';
-              working.localKnownName = working.localKnownName || working.nidName;
-              working.needsScan = false;
-              await updateQueuedEntry(working);
-            }
-          }
-        }
-
         const res = await fetch('/api/records', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

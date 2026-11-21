@@ -25,21 +25,16 @@ export interface SurveyRecord {
 export interface ScanResponseData {
   nidName: string;
   nidNumber: string;
-  detectedAddressArea: string;
+  detectedAddressArea?: string;
   confidence: 'high' | 'medium' | 'low';
   warning: string;
-}
-
-export interface ScanApiResponse {
-  success: boolean;
-  data?: ScanResponseData;
-  error?: string;
-  details?: string;
+  rawText?: string;
 }
 
 export interface RecordsApiResponse {
   success: boolean;
   data?: SurveyRecord[];
+  records?: SurveyRecord[];
   error?: string;
   message?: string;
   duplicate?: boolean;

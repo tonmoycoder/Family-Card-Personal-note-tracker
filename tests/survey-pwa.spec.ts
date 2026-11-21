@@ -3,8 +3,22 @@ import { test, expect } from '@playwright/test';
 const SAMPLE_BASE64_IMAGE =
   'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 
-test.describe('Bangladesh Family Card Survey PWA', () => {
+test.describe('Bangladesh Family Card Survey PWA (100% On-Device OCR)', () => {
   test.beforeEach(async ({ page }) => {
+    // Inject mock for on-device OCR so tests don't download 15MB traineddata
+    await page.addInitScript(() => {
+      (window as unknown as { __MOCK_NID_SCAN__: (img: string) => Promise<unknown> }).__MOCK_NID_SCAN__ =
+        async () => {
+          return {
+            nidName: 'মোছাঃ রোকসানা খাতুন',
+            nidNumber: '19902612345678901',
+            confidence: 'high',
+            warning: '',
+            rawText: 'নাম\nমোছাঃ রোকসানা খাতুন\nNID No\n19902612345678901',
+          };
+        };
+    });
+
     // Intercept GET /api/records with mock data so tests are isolated
     await page.route('**/api/records', async (route) => {
       if (route.request().method() === 'GET') {
@@ -13,7 +27,8 @@ test.describe('Bangladesh Family Card Survey PWA', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             success: true,
-            data: [
+            total: 1,
+            records: [
               {
                 Serial: 1,
                 Date: '2026-11-22',
@@ -53,24 +68,6 @@ test.describe('Bangladesh Family Card Survey PWA', () => {
 
   test('Online Scan & Submit Flow (Local known name fallback & schema compliance)', async ({ page }) => {
     let capturedPayload: Record<string, unknown> | null = null;
-
-    // Mock scan API
-    await page.route('**/api/scan-nid', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          data: {
-            nidName: 'মোছাঃ রোকসানা খাতুন',
-            nidNumber: '19902612345678901',
-            detectedAddressArea: 'চর বাঘমারা',
-            confidence: 'high',
-            warning: '',
-          },
-        }),
-      });
-    });
 
     // Mock records POST
     await page.route('**/api/records', async (route) => {
@@ -139,24 +136,6 @@ test.describe('Bangladesh Family Card Survey PWA', () => {
   });
 
   test('Duplicate detection triggers confirmation modal', async ({ page }) => {
-    // Mock scan API
-    await page.route('**/api/scan-nid', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          data: {
-            nidName: 'করিম মিয়া',
-            nidNumber: '19851234567890123',
-            detectedAddressArea: 'দক্ষিণ পাড়া',
-            confidence: 'high',
-            warning: '',
-          },
-        }),
-      });
-    });
-
     await page.route('**/api/records', async (route) => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
@@ -256,24 +235,7 @@ test.describe('Bangladesh Family Card Survey PWA', () => {
     });
     expect(idbItemCount).toBe(1);
 
-    // Mock scan and record upload for auto-sync
-    await page.route('**/api/scan-nid', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          data: {
-            nidName: 'আব্দুল হালিম',
-            nidNumber: '19701234567890123',
-            detectedAddressArea: 'নদীভাঙন চর',
-            confidence: 'high',
-            warning: '',
-          },
-        }),
-      });
-    });
-
+    // Mock record upload for auto-sync
     await page.route('**/api/records', async (route) => {
       if (route.request().method() === 'POST') {
         await route.fulfill({
