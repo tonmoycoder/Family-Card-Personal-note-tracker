@@ -71,3 +71,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const scriptUrl = process.env.APPS_SCRIPT_URL;
+    if (!scriptUrl) {
+      return NextResponse.json(
+        { success: false, error: 'সার্ভারে APPS_SCRIPT_URL সেট করা নেই।' },
+        { status: 500 }
+      );
+    }
+
+    const body = await req.json();
+    const { serial, date, nidNumber, imageDriveLink } = body;
+
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'delete',
+        serial,
+        date,
+        nidNumber,
+        imageDriveLink,
+      }),
+      redirect: 'follow',
+    });
+
+    const data = await safeParseAppsScriptResponse(res);
+    return NextResponse.json(data, { status: res.ok ? 200 : res.status });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'ডিলিট করা যায়নি।';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}

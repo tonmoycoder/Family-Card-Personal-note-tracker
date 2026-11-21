@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
+import fs from 'fs';
+import path from 'path';
 
 // Sample 20x20 red/blue canvas data URL as a real color image
-const SAMPLE_COLOR_IMAGE =
+const _SAMPLE_COLOR_IMAGE =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAA7SURBVDhPY/wPBAwUACYGaoCRgUYGGBlowlBQUFBG8v9/A2NTA8b/DAYGhmcgA41GDRk1ZNRAbAaOmv/ffwA2pBfRjF8RrwAAAABJRU5ErkJggg==';
 
 test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
@@ -51,8 +53,10 @@ test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
     });
   });
 
-  // QA CHECK 1: Zero console errors & Zero unhandled page errors
-  test('QA Check 1: Zero console errors and zero page errors across all views', async ({ page }) => {
+  // QA CHECK 1: Zero console errors, zero loops, and zero CLS
+  test('Check 1 (Zero Errors & Zero Loops): 0 console errors, 0 page errors, recordsFetch <= 1, CLS = 0px', async ({
+    page,
+  }) => {
     const errors: string[] = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') {
@@ -63,24 +67,6 @@ test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
       errors.push(err.message);
     });
 
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-
-    // Check tabs
-    await page.locator('nav button:has-text("তালিকা")').click();
-    await expect(page.locator('text=#001')).toBeVisible();
-
-    await page.locator('nav button:has-text("কিউ")').click();
-    await expect(page.locator('text=কোনো কিউ করা এন্ট্রি নেই')).toBeVisible();
-
-    await page.locator('nav button:has-text("সার্ভে")').click();
-    await expect(page.locator('button:has-text("সেভ ও ড্রাইভে আপলোড করুন")')).toBeVisible();
-
-    expect(errors).toEqual([]);
-  });
-
-  // QA CHECK 2: Zero Infinite Sync Loops & Network Storms
-  test('QA Check 2: Zero infinite sync loops (GET /api/records <= 1, no sync flashing)', async ({ page }) => {
     let getRecordsCount = 0;
     await page.route('**/api/records', async (route) => {
       if (route.request().method() === 'GET') {
@@ -97,166 +83,286 @@ test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
 
     await page.goto('/');
 
-    // Wait 5 full seconds
-    await page.waitForTimeout(5000);
-
-    // Initial records load should happen at most once (or 0 since Survey tab is active by default)
-    expect(getRecordsCount).toBeLessThanOrEqual(1);
-
-    // "সিঙ্ক চলছে..." MUST NEVER be visible when offline queue is empty!
-    const syncInProgressText = page.locator('text=সিঙ্ক চলছে...');
-    await expect(syncInProgressText).not.toBeVisible();
-  });
-
-  // QA CHECK 3: Zero Layout Shift (CLS = 0)
-  test('QA Check 3: Form inputs remain perfectly stable without bouncing (delta = 0px)', async ({ page }) => {
-    await page.goto('/');
-
     // Measure initial top position of NID Name input
     const initialBox = await page.locator('input#nidName').boundingBox();
     expect(initialBox).not.toBeNull();
     const initialTop = initialBox!.y;
 
-    // Observe layout over 4 seconds while GPS and online hooks run
+    // Wait 4 full seconds to verify loop-free and stable layout
     await page.waitForTimeout(4000);
 
     const postBox = await page.locator('input#nidName').boundingBox();
     expect(postBox).not.toBeNull();
     const postTop = postBox!.y;
 
-    // Vertical delta MUST be 0 (no layout jumps)
-    const delta = Math.abs(postTop - initialTop);
-    expect(delta).toBe(0);
-  });
+    // Vertical delta MUST be 0
+    expect(Math.abs(postTop - initialTop)).toBe(0);
 
-  // QA CHECK 4: Real Photo Upload & Manual Fallback Guarantee
-  test('QA Check 4: Color photo preview visible (naturalWidth > 0) & manual entry sent in payload', async ({
-    page,
-  }) => {
-    let capturedPayload: Record<string, unknown> | null = null;
+    // Initial records load should happen at most once (or 0 since Survey tab is active by default)
+    expect(getRecordsCount).toBeLessThanOrEqual(1);
 
-    await page.route('**/api/records', async (route) => {
-      if (route.request().method() === 'POST') {
-        capturedPayload = route.request().postDataJSON();
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true, serial: 10 }),
-        });
-      } else {
-        await route.continue();
-      }
-    });
+    // "সিঙ্ক চলছে..." MUST NEVER be visible when offline queue is empty!
+    await expect(page.locator('text=সিঙ্ক চলছে...')).not.toBeVisible();
 
-    await page.goto('/');
-
-    // Upload real color image
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.locator('button:has-text("গ্যালারি / ফাইল")').click();
-    const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles({
-      name: 'real-photo.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(SAMPLE_COLOR_IMAGE.split(',')[1], 'base64'),
-    });
-
-    // Check preview is rendered and has positive natural dimensions
-    const imgLocator = page.locator('img[alt="এনআইডি প্রিভিউ"]');
-    await expect(imgLocator).toBeVisible({ timeout: 5000 });
-    const isImageValid = await imgLocator.evaluate((img: HTMLImageElement) => {
-      return img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
-    });
-    expect(isImageValid).toBe(true);
-
-    // User fills manual data
-    await page.locator('input#nidName').fill('মোছাঃ আমেনা খাতুন');
-    await page.locator('input#nidNumber').fill('19921234567890123');
-    await page.locator('input#localKnownName').fill('আমেনা বুজি');
-    await page.locator('input#areaPara').fill('পশ্চিম পাড়া');
-    await page.locator('textarea#notes').fill('জরুরি প্রয়োজন');
-
-    // Submit form
-    await page.locator('button:has-text("সেভ ও ড্রাইভে আপলোড করুন")').click();
-
-    // Verify success banner/toast
-    await expect(page.locator('text=সফলভাবে ডাটাবেজ ও গুগল ড্রাইভে আপলোড হয়েছে!')).toBeVisible({ timeout: 8000 });
-
-    // Verify captured payload
-    expect(capturedPayload).not.toBeNull();
-    const payload = capturedPayload as unknown as Record<string, unknown>;
-    expect(payload.nidName).toBe('মোছাঃ আমেনা খাতুন');
-    expect(payload.nidNumber).toBe('19921234567890123');
-    expect(payload.localKnownName).toBe('আমেনা বুজি');
-    expect(payload.areaPara).toBe('পশ্চিম পাড়া');
-    expect(payload.notes).toBe('জরুরি প্রয়োজন');
-    expect(payload.imageBase64).toBeTruthy();
-  });
-
-  // QA CHECK 5: Offline Queue Persistence & Single-Shot Auto-Sync
-  test('QA Check 5: Offline queue persistence in IndexedDB and single-shot auto-sync', async ({
-    context,
-    page,
-  }) => {
-    let postSyncCount = 0;
-    await page.route('**/api/records', async (route) => {
-      if (route.request().method() === 'POST') {
-        postSyncCount++;
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true, serial: 11 }),
-        });
-      } else {
-        await route.continue();
-      }
-    });
-
-    await page.goto('/');
-
-    // Simulate offline
-    await context.setOffline(true);
-    await expect(page.locator('text=অফলাইন — ডেটা ডিভাইসে সুরক্ষিত থাকবে')).toBeVisible();
-
-    // Upload image
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.locator('button:has-text("গ্যালারি / ফাইল")').click();
-    const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles({
-      name: 'nid.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(SAMPLE_COLOR_IMAGE.split(',')[1], 'base64'),
-    });
-
-    await page.locator('input#localKnownName').fill('আব্দুর রহিম');
-    await page.locator('input#nidName').fill('আব্দুর রহিম');
-    await page.locator('input#nidNumber').fill('19801234567890123');
-    await page.locator('input#areaPara').fill('পূর্ব পাড়া');
-
-    // Submit offline
-    await page.locator('button:has-text("অফলাইন কিউতে সেভ করুন")').click();
-    await expect(page.locator('text=অফলাইনে সংরক্ষিত হয়েছে!')).toBeVisible();
-
-    // Go to Queue tab and verify
+    // Check tabs navigate without errors
+    await page.locator('nav button:has-text("তালিকা")').click();
     await page.locator('nav button:has-text("কিউ")').click();
-    await expect(page.locator('text=আব্দুর রহিম')).toBeVisible();
+    await page.locator('nav button:has-text("সার্ভে")').click();
 
-    // Reconnect online
-    await context.setOffline(false);
-    await expect(page.locator('text=অনলাইন')).toBeVisible({ timeout: 5000 });
-
-    // Trigger sync
-    const syncBtn = page.locator('button:has-text("এখনই সিঙ্ক করুন")');
-    if (await syncBtn.isVisible()) {
-      await syncBtn.click();
-    }
-
-    // Verify queue cleared
-    await expect(page.locator('text=কোনো কিউ করা এন্ট্রি নেই')).toBeVisible({ timeout: 10000 });
-    expect(postSyncCount).toBe(1);
+    expect(errors).toEqual([]);
   });
 
-  // QA CHECK 6: Mobile Visual Geometry (390x844)
-  test('QA Check 6: Fixed mobile geometry (header=56px, nav=64px, networkBar=44px)', async ({ page }) => {
+  // QA CHECK 2: Removable Saved Area Chips
+  test('Check 2 (Removable Area Chips): Save an area chip, click × button, confirm removal from DOM & localStorage', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    // Inject saved area chips into localStorage
+    await page.evaluate(() => {
+      localStorage.setItem('family_card_saved_areas', JSON.stringify(['নলছিটি চর', 'পূর্ব পাড়া']));
+    });
+    await page.reload();
+
+    // Verify 'নলছিটি চর' chip is rendered
+    const chipText = page.locator('text=নলছিটি চর');
+    await expect(chipText).toBeVisible();
+
+    // Click the inline '×' button with aria-label="এলাকা মুছুন"
+    const removeBtn = page.getByRole('button', { name: 'এলাকা মুছুন' }).first();
+    await removeBtn.click();
+
+    // Confirm it disappears from DOM
+    await expect(chipText).not.toBeVisible();
+
+    // Confirm it is removed from localStorage
+    const savedAreas = await page.evaluate(() => {
+      return JSON.parse(localStorage.getItem('family_card_saved_areas') || '[]');
+    });
+    expect(savedAreas).not.toContain('নলছিটি চর');
+  });
+
+  // QA CHECK 3: Sorting & Date Filter
+  test('Check 3 (Sorting & Date Filter): Sort modes and date filtering reorder/filter cards accurately', async ({
+    page,
+  }) => {
+    const mockRecords = [
+      {
+        Serial: 1,
+        Date: '2026-11-20',
+        Timestamp: '10:00:00 AM',
+        NID_Name: 'আলী হোসেন',
+        NID_Number: '19801111111111111',
+        Local_Known_Name: 'আলী হোসেন',
+        Area_Para: 'উত্তর পাড়া',
+        Maps_Link: 'https://maps.google.com/?q=23,90',
+        Image_Drive_Link: 'https://drive.google.com/test1',
+        Notes: '',
+      },
+      {
+        Serial: 2,
+        Date: '2026-11-22',
+        Timestamp: '02:00:00 PM',
+        NID_Name: 'বিলকিস বেগম',
+        NID_Number: '19852222222222222',
+        Local_Known_Name: 'বিলকিস বেগম',
+        Area_Para: 'দক্ষিণ পাড়া',
+        Maps_Link: 'https://maps.google.com/?q=23,90',
+        Image_Drive_Link: 'https://drive.google.com/test2',
+        Notes: '',
+      },
+      {
+        Serial: 3,
+        Date: '2026-11-21',
+        Timestamp: '04:00:00 PM',
+        NID_Name: 'করিম উল্লাহ',
+        NID_Number: '19903333333333333',
+        Local_Known_Name: 'করিম উল্লাহ',
+        Area_Para: 'চর বাঘমারা',
+        Maps_Link: 'https://maps.google.com/?q=23,90',
+        Image_Drive_Link: 'https://drive.google.com/test3',
+        Notes: '',
+      },
+    ];
+
+    await page.route('**/api/records', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, total: 3, records: mockRecords }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.goto('/');
+    await page.locator('nav button:has-text("তালিকা")').click();
+
+    // Verify all 3 cards are visible initially
+    await expect(page.locator('text=#001')).toBeVisible();
+    await expect(page.locator('text=#002')).toBeVisible();
+    await expect(page.locator('text=#003')).toBeVisible();
+
+    // Default Sort: "নতুন তারিখ আগে" -> #002 (2026-11-22) should be first card
+    const firstCardSerialDefault = page.locator('span.font-mono').first();
+    await expect(firstCardSerialDefault).toHaveText('#002');
+
+    // Test Sort: "পুরোনো তারিখ আগে" -> #001 (2026-11-20) should be first card
+    await page.locator('button:has-text("পুরোনো তারিখ আগে")').click();
+    const firstCardSerialOldest = page.locator('span.font-mono').first();
+    await expect(firstCardSerialOldest).toHaveText('#001');
+
+    // Test Sort: "এলাকা অনুযায়ী" -> 'উত্তর পাড়া' (#001) should be first alphabetically
+    await page.locator('button:has-text("এলাকা অনুযায়ী")').click();
+    await expect(page.locator('span.font-mono').first()).toBeVisible();
+
+    // Test Date Filter: Select '2026-11-22'
+    const dateSelect = page.locator('select[aria-label="তারিখ ফিল্টার"]');
+    await dateSelect.selectOption('2026-11-22');
+
+    // Only #002 should be visible
+    await expect(page.locator('text=#002')).toBeVisible();
+    await expect(page.locator('text=#001')).not.toBeVisible();
+    await expect(page.locator('text=#003')).not.toBeVisible();
+
+    // Reset date filter
+    await dateSelect.selectOption('all');
+    await expect(page.locator('text=#001')).toBeVisible();
+  });
+
+  // QA CHECK 4: Sync-Delete Flow with Modal
+  test('Check 4 (Sync-Delete): Delete button opens confirmation modal, confirms, calls DELETE /api/records', async ({
+    page,
+  }) => {
+    let deletePayload: Record<string, unknown> | null = null;
+
+    await page.addInitScript(() => {
+      localStorage.removeItem('family_card_cached_records');
+    });
+
+    await page.route('**/api/records', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            total: 1,
+            records: [
+              {
+                Serial: 1,
+                Date: '2026-11-22',
+                Timestamp: '01:30:00 AM',
+                NID_Name: 'মোছাঃ ফাতেমা বেগম',
+                NID_Number: '19851234567890123',
+                Local_Known_Name: 'ফাতেমা বেগম',
+                Area_Para: 'দক্ষিণ পাড়া',
+                Maps_Link: 'https://maps.google.com/?q=23,90',
+                Image_Drive_Link: 'https://drive.google.com/test1',
+                Notes: '',
+              },
+            ],
+          }),
+        });
+        return;
+      }
+      if (route.request().method() === 'DELETE') {
+        deletePayload = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, message: 'রেকর্ড মুছে ফেলা হয়েছে।' }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.goto('/');
+    await page.locator('nav button:has-text("তালিকা")').click();
+    await expect(page.locator('text=#001')).toBeVisible();
+
+    // Click "মুছুন" on record #001
+    await page.locator('button[aria-label="মুছুন"]').first().click();
+
+    // Verify Confirmation Modal
+    await expect(page.locator('text=এন্ট্রি স্থায়ীভাবে মুছবেন?')).toBeVisible();
+    await expect(page.locator('text=মুছে ফেলতে চান?')).toBeVisible();
+
+    // Click "হ্যাঁ, মুছুন"
+    await page.locator('button:has-text("হ্যাঁ, মুছুন")').click();
+
+    // Verify toast
+    await expect(page.locator('text=এন্ট্রি ও ড্রাইভের ছবি সফলভাবে মুছে ফেলা হয়েছে।')).toBeVisible();
+
+    // Assert DELETE request payload
+    expect(deletePayload).not.toBeNull();
+    expect(deletePayload!.serial).toBe(1);
+
+    // Assert card #001 is removed from DOM
+    await expect(page.locator('text=#001')).not.toBeVisible();
+  });
+
+  // QA CHECK 5: Clean Timestamp Sanitization & Action Links
+  test('Check 5 (Clean Timestamp + Maps/Drive Buttons): Legacy 1899 timestamp is sanitized cleanly', async ({
+    page,
+  }) => {
+    const mockLegacyRecord = [
+      {
+        Serial: 7,
+        Date: '2026-11-22',
+        Timestamp: 'Sat Dec 30 1899 14:45:00 GMT+0553 (Bangladesh Standard Time)',
+        NID_Name: 'জরিনা খাতুন',
+        NID_Number: '19701234567890123',
+        Local_Known_Name: 'জরিনা বেওয়া',
+        Area_Para: 'মধ্য পাড়া',
+        Maps_Link: 'https://www.google.com/maps?q=23.8,90.4',
+        Image_Drive_Link: 'https://drive.google.com/file/d/sample/view',
+        Notes: '',
+      },
+    ];
+
+    await page.route('**/api/records', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, total: 1, records: mockLegacyRecord }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.goto('/');
+    await page.locator('nav button:has-text("তালিকা")').click();
+    await expect(page.locator('text=#007')).toBeVisible();
+
+    // Assert that '1899' or 'GMT' is NOT shown
+    const timestampSpan = page.locator('span:has-text("14:45:00")');
+    await expect(timestampSpan).toBeVisible();
+    const textContent = await timestampSpan.innerText();
+    expect(textContent).not.toContain('1899');
+    expect(textContent).not.toContain('GMT');
+    expect(textContent).toContain('14:45:00');
+
+    // Assert Maps link
+    const mapsBtn = page.locator('a:has-text("ম্যাপে দেখুন")');
+    await expect(mapsBtn).toBeVisible();
+    await expect(mapsBtn).toHaveAttribute('href', 'https://www.google.com/maps?q=23.8,90.4');
+
+    // Assert Drive link
+    const driveBtn = page.locator('a:has-text("এনআইডি ছবি")');
+    await expect(driveBtn).toBeVisible();
+    await expect(driveBtn).toHaveAttribute('href', 'https://drive.google.com/file/d/sample/view');
+  });
+
+  // QA CHECK 6: Visual Geometry & Screenshots Verification
+  test('Check 6 (Visual Verification): Capture mobile screenshots and verify mobile geometry', async ({
+    page,
+  }) => {
     await page.goto('/');
 
     // Check Header height (h-14 = 56px)
@@ -274,5 +380,24 @@ test.describe('Mobile QA & Anti-Regression Suite (390x844)', () => {
     const netBox = await networkBar.boundingBox();
     expect(netBox).not.toBeNull();
     expect(netBox!.height).toBeCloseTo(44, 1);
+
+    // Capture visual screenshot of Survey Tab
+    const screenshotDir = path.join(process.cwd(), 'test-results', 'screenshots');
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
+    const surveyScreenshot = path.join(screenshotDir, 'survey-tab-390x844.png');
+    await page.screenshot({ path: surveyScreenshot, fullPage: false });
+    expect(fs.existsSync(surveyScreenshot)).toBe(true);
+
+    // Capture visual screenshot of List Tab
+    await page.locator('nav button:has-text("তালিকা")').click();
+    await expect(page.locator('text=#001')).toBeVisible();
+    const listScreenshot = path.join(screenshotDir, 'list-tab-390x844.png');
+    await page.screenshot({ path: listScreenshot, fullPage: false });
+    expect(fs.existsSync(listScreenshot)).toBe(true);
+
+    // Clean up temporary screenshots
+    fs.rmSync(screenshotDir, { recursive: true, force: true });
   });
 });

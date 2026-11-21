@@ -30,7 +30,7 @@ async function getOcrWorker(): Promise<Worker> {
     workerPromise = (async () => {
       const { createWorker } = await import('tesseract.js');
       const worker = await createWorker(['ben', 'eng'], 1, {
-        langPath: 'https://tessdata.projectnaptha.com/4.0.0_best',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
         logger: (m) => {
           if (currentProgressCb && typeof m.progress === 'number') {
             currentProgressCb(Math.round(m.progress * 100), mapStatusToBangla(m.status || ''));
@@ -76,11 +76,13 @@ async function preprocessImageForOcr(imageDataUrl: string): Promise<string> {
       const imageData = ctx.getImageData(0, 0, width, height);
       const data = imageData.data;
 
-      // Pass 1: Grayscale & find dynamic range
+      // Pass 1: Grayscale & find dynamic range (preserving RED ink for older laminated NID cards)
       const grays = new Uint8ClampedArray(width * height);
       const hist = new Uint32Array(256);
       for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        const g = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        const redPreserver = Math.min(data[i + 1], data[i + 2]);
+        const g = Math.round(Math.min(lum, redPreserver * 0.85 + lum * 0.15));
         grays[p] = g;
         hist[g]++;
       }

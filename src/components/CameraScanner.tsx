@@ -164,10 +164,13 @@ export default function CameraScanner({
   };
 
   const handleCaptureLive = async () => {
-    const frame = await captureFrame();
-    if (frame) {
+    const res = captureFrame();
+    const frame = typeof res === 'string' ? res : res?.dataUrl;
+    if (frame && !(typeof res === 'object' && res?.isBlack)) {
       setLiveModeActive(false);
       handleProcessImage(frame);
+    } else {
+      setScanWarning('ক্যামেরা ফ্রেম কালো এসেছে। পর্যাপ্ত আলোতে আবার ছবি তুলুন।');
     }
   };
 

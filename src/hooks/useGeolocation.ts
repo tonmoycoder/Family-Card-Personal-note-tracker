@@ -2,72 +2,71 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export type GeolocationStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type GpsStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-export interface UseGeolocationResult {
-  mapsLink: string;
-  status: GeolocationStatus;
-  errorMessage: string;
-  refreshLocation: () => void;
-}
-
-export function useGeolocation(initialMapsLink?: string): UseGeolocationResult {
+export function useGeolocation(initialMapsLink?: string) {
   const [mapsLink, setMapsLink] = useState<string>(initialMapsLink || '');
-  const [status, setStatus] = useState<GeolocationStatus>('idle');
+  const [status, setStatus] = useState<GpsStatus>(initialMapsLink ? 'ready' : 'loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const activeReqRef = useRef<number>(0);
 
-  // Cache last valid link in a ref so a refresh attempt never blanks out an already working link
-  const lastValidLinkRef = useRef<string>(initialMapsLink || '');
-
-  const fetchPosition = useCallback(() => {
-    setStatus('loading');
-    setErrorMessage('');
-
+  const fetchLocation = useCallback(() => {
     if (typeof window === 'undefined' || !('geolocation' in navigator)) {
-      setErrorMessage('ডিভাইসে জিপিএস সুবিধা নেই।');
       setStatus('error');
+      setErrorMessage('এই ব্রাউজারে জিপিএস সাপোর্ট নেই।');
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude.toFixed(6);
-        const lng = pos.coords.longitude.toFixed(6);
-        const link = `https://www.google.com/maps?q=${lat},${lng}`;
-        lastValidLinkRef.current = link;
-        setMapsLink(link);
-        setStatus('ready');
-        setErrorMessage('');
-      },
-      (err) => {
-        let msg = 'লোকেশন পাওয়া যায়নি।';
-        if (err.code === err.PERMISSION_DENIED) {
-          msg = 'লোকেশন পারমিশন দেওয়া হয়নি। ব্রাউজার সেটিংসে অনুমতি দিন।';
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          msg = 'জিপিএস সিগন্যাল দুর্বল। খোলা জায়গায় চেষ্টা করুন।';
-        } else if (err.code === err.TIMEOUT) {
-          msg = 'লোকেশন পেতে সময় বেশি লেগেছে। আবার চেষ্টা করুন।';
-        }
-        setErrorMessage(msg);
-        setStatus(lastValidLinkRef.current ? 'ready' : 'error');
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 12000,
-        maximumAge: 60000,
+    const reqId = ++activeReqRef.current;
+    setStatus('loading');
+    setErrorMessage('');
+
+    const onSuccess = (pos: GeolocationPosition) => {
+      if (reqId !== activeReqRef.current) return;
+      const lat = pos.coords.latitude.toFixed(6);
+      const lng = pos.coords.longitude.toFixed(6);
+      setMapsLink(`https://www.google.com/maps?q=${lat},${lng}`);
+      setStatus('ready');
+      setErrorMessage('');
+    };
+
+    const onFinalError = (err: GeolocationPositionError) => {
+      if (reqId !== activeReqRef.current) return;
+      setStatus('error');
+      if (err.code === err.PERMISSION_DENIED) {
+        setErrorMessage('লোকেশন পারমিশন বন্ধ আছে। ব্রাউজার সেটিংস থেকে Allow করুন।');
+      } else {
+        setErrorMessage('লোকেশন পাওয়া যায়নি। ফোনের GPS চালু করে আবার চেষ্টা করুন।');
       }
+    };
+
+    // Stage 1: High-accuracy GPS (accept 60s cached fix for instant lock)
+    navigator.geolocation.getCurrentPosition(
+      onSuccess,
+      (err) => {
+        if (reqId !== activeReqRef.current) return;
+        if (err.code === err.PERMISSION_DENIED) {
+          onFinalError(err);
+          return;
+        }
+        // Stage 2: Automatic fast network/cell fallback (works indoors & on Brave)
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          onFinalError,
+          { enableHighAccuracy: false, timeout: 12000, maximumAge: 120000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
     );
   }, []);
 
-  // Request location EXACTLY ONCE on mount
   useEffect(() => {
-    fetchPosition();
-  }, [fetchPosition]);
+    fetchLocation();
+    const reqRef = activeReqRef;
+    return () => {
+      reqRef.current++;
+    };
+  }, [fetchLocation]);
 
-  return {
-    mapsLink,
-    status,
-    errorMessage,
-    refreshLocation: fetchPosition,
-  };
+  return { mapsLink, status, errorMessage, refreshLocation: fetchLocation };
 }

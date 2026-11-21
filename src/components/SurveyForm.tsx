@@ -41,6 +41,7 @@ export default function SurveyForm({
 
   // Suggested areas from scan or history
   const [scannedAreaHint, setScannedAreaHint] = useState<string>('');
+  const [savedAreas, setSavedAreas] = useState<string[]>([]);
 
   // UI States
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -54,15 +55,56 @@ export default function SurveyForm({
     existingArea?: string;
   }>({ open: false, message: '' });
 
-  // Remember last used area from localStorage
+  // Remember last used area & load saved areas from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedArea = localStorage.getItem('family_card_last_area');
       if (savedArea) {
         setAreaPara(savedArea);
       }
+
+      try {
+        const customSaved: string[] = JSON.parse(localStorage.getItem('family_card_saved_areas') || '[]');
+        const removedAreas: string[] = JSON.parse(localStorage.getItem('family_card_removed_areas') || '[]');
+        const removedSet = new Set(removedAreas);
+
+        const combined = new Set<string>();
+        if (savedArea && !removedSet.has(savedArea)) combined.add(savedArea);
+        customSaved.forEach((a) => {
+          if (!removedSet.has(a)) combined.add(a);
+        });
+        existingAreas.forEach((a) => {
+          if (!removedSet.has(a)) combined.add(a);
+        });
+        setSavedAreas(Array.from(combined));
+      } catch {
+        setSavedAreas(existingAreas);
+      }
     }
-  }, []);
+  }, [existingAreas]);
+
+  const handleRemoveArea = (areaToRemove: string) => {
+    setSavedAreas((prev) => prev.filter((a) => a !== areaToRemove));
+    if (typeof window !== 'undefined') {
+      try {
+        const customSaved: string[] = JSON.parse(localStorage.getItem('family_card_saved_areas') || '[]');
+        const updatedSaved = customSaved.filter((a) => a !== areaToRemove);
+        localStorage.setItem('family_card_saved_areas', JSON.stringify(updatedSaved));
+
+        const removedAreas: string[] = JSON.parse(localStorage.getItem('family_card_removed_areas') || '[]');
+        if (!removedAreas.includes(areaToRemove)) {
+          removedAreas.push(areaToRemove);
+          localStorage.setItem('family_card_removed_areas', JSON.stringify(removedAreas));
+        }
+
+        if (localStorage.getItem('family_card_last_area') === areaToRemove) {
+          localStorage.removeItem('family_card_last_area');
+        }
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToastMessage({ text, type });
@@ -126,7 +168,17 @@ export default function SurveyForm({
 
     // Persist selected area in localStorage for subsequent entries
     if (typeof window !== 'undefined') {
-      localStorage.setItem('family_card_last_area', areaPara.trim());
+      const trimmed = areaPara.trim();
+      localStorage.setItem('family_card_last_area', trimmed);
+      try {
+        const customSaved: string[] = JSON.parse(localStorage.getItem('family_card_saved_areas') || '[]');
+        if (!customSaved.includes(trimmed)) {
+          customSaved.push(trimmed);
+          localStorage.setItem('family_card_saved_areas', JSON.stringify(customSaved));
+        }
+      } catch {
+        // ignore
+      }
     }
 
     const { capturedDate, capturedTimestamp } = getBangladeshDateTime();
@@ -367,19 +419,37 @@ export default function SurveyForm({
               </button>
             )}
 
-            {existingAreas.slice(0, 4).map((area) => (
-              <button
+            {savedAreas.slice(0, 6).map((area) => (
+              <div
                 key={area}
-                type="button"
-                onClick={() => setAreaPara(area)}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                className={`inline-flex items-center rounded-full border text-xs font-medium transition-colors ${
                   areaPara === area
                     ? 'bg-slate-800 text-white border-slate-800'
                     : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
                 }`}
               >
-                {area}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setAreaPara(area)}
+                  className="pl-2.5 pr-1 py-1 focus:outline-none"
+                >
+                  {area}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveArea(area);
+                  }}
+                  aria-label="এলাকা মুছুন"
+                  title="এলাকা মুছুন"
+                  className={`p-1 rounded-full hover:bg-black/10 transition-colors ${
+                    areaPara === area ? 'text-slate-300 hover:text-white' : 'text-slate-400 hover:text-rose-600'
+                  }`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
